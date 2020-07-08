@@ -21,7 +21,7 @@ The use of the NCC correlation map obtained from a FLAIR sequence to measure the
 
 ## Prerequisites
 
-It is required to have the images in nifty format. The processing of the images in this work was done with FSL (it is possible to use others). Python 3.5 was used for data analysis.
+It is required to have the images in nifti format. The processing of the images in this work was done with FSL (it is possible to use others). Python 3.5 was used for data analysis.
 
 
 ## Contributing
