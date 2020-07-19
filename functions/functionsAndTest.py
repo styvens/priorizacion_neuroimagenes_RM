@@ -4,9 +4,25 @@ import json
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
+import math
 from scipy.stats import entropy
 from scipy.stats import mannwhitneyu
 from scipy import stats
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_score, classification_report,f1_score,roc_auc_score,recall_score
+from sklearn.model_selection import KFold
+from sklearn.model_selection import cross_val_score
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import GradientBoostingClassifier, AdaBoostClassifier
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import SVC
+from sklearn.ensemble import VotingClassifier
+from sklearn.metrics import roc_curve,auc
 
 def imagCentralTend(data,measure):
     if(measure=='mean'):
@@ -171,7 +187,6 @@ def rPermut(n_permuta,x_l,x_r,order,n,calType):
     Results = {}
     
     for  j in np.arange(n_permuta):
-        #r = permut(n)
         X, Y = ranselect(x_l,x_r,n)
         cal=rCal(X,Y,order,calType)
         Nx.append(cal[0])
@@ -240,7 +255,6 @@ def distTest(n_figure,x,y,data,type_patient,norm,col):
     f=plt.figure(figsize=(16,14))
     dim = str(x)+str(y)
     for i in np.arange(n_figure):
-        #ax=plt.subplot(x, y, i+1)
         ax=f.add_subplot(x,y,i+1)
         
         sns.distplot(data[i]['R'], hist = True, kde = True,ax=ax,
@@ -356,10 +370,6 @@ def checkHCPBianca(dat,threshold0,thresholdn,thresholdsd,reff):
     return(res)
 
 
-
-
-
-
 def entropyData(x,y,nextend):
     '''
     Select and exchange of values between two vectors, given the positions
@@ -439,7 +449,6 @@ def entropyRpermut(x,y,quantiles,nextend):
         values_y = np.repeat(Q_y, nq_y, axis=0)
         _, counts_elements_y = np.unique(values_y, return_counts=True)
         cal_y = entropy(counts_elements_y)
-        #Entropy.append(cal)
         
         ENTROPY_x.append(cal_x)
         ENTROPY_y.append(cal_y)
@@ -552,3 +561,217 @@ def imagPCA_eigen(data,components,space):
         pca = PCA(n_components=components[0], svd_solver='full').fit(data['data'])
         return(pca)
     
+    
+def subespace(H_train,dat_healty,dat_pathologic,tot_var_explained):  
+    heat_cov = imagCov(H_train,space='all')
+    _,s_h,_ = np.linalg.svd(heat_cov)
+    comp_healt = CompNum(s_h,tot_var_explained)
+    n_comp=[comp_healt]
+    heat_pca = imagPCA(H_train,n_comp,'all')
+    
+    # Projection pathologic on helthy space
+    healtONhealt = heat_pca.transform(dat_healty)
+    patholONhealt = heat_pca.transform(dat_pathologic)
+    return(healtONhealt,patholONhealt,comp_healt)
+
+
+def dataPreparation(healtONhealt,patholONhealt):
+    # data for models
+    h = np.zeros(healtONhealt.shape[0])
+    p = np.ones(patholONhealt.shape[0])
+    x = np.concatenate((healtONhealt,patholONhealt),axis=0)
+    y = np.concatenate((h,p),axis=0)
+    X_train, X_test, y_train, y_test = train_test_split(x, y, test_size=0.3, stratify=y)
+    
+    # standaritation
+    scaler = StandardScaler().fit(X_train)
+    X_train = scaler.transform(X_train)
+    X_test = scaler.transform(X_test)
+    return(X_train, X_test, y_train, y_test)
+
+
+def modelEvaluation(X_train,y_train,n_splits,scoring):
+    # Comparison Models and cross validation
+    # prepare models
+    models = []
+    models.append(('LR', LogisticRegression(solver='newton-cg')))
+    models.append(('LDA', LinearDiscriminantAnalysis()))
+    models.append(('KNN', KNeighborsClassifier()))
+    models.append(('CART', DecisionTreeClassifier()))
+    models.append(('NB', GaussianNB()))
+    models.append(('SVM', SVC(gamma='scale')))
+    models.append(('RF', RandomForestClassifier(n_estimators = 100, random_state = 42)))
+    models.append(('AGB', AdaBoostClassifier(n_estimators=100, random_state=42)))
+    models.append(('SGB', GradientBoostingClassifier(n_estimators=100, random_state=42)))
+
+    # Evaluate each model in turn
+    results = {}
+    names = []
+
+    for name, model in models:
+        kfold = KFold(n_splits=n_splits, random_state=2020)
+        cv_results = cross_val_score(model, X_train, y_train, cv=kfold, scoring=scoring) 
+        results['models'] = names.append(name)
+        results[name] = cv_results
+    return(results,names)
+
+
+def modelFit(X_train, X_test, y_train, y_test):
+    modelsR = []
+    #modelsR.append(('LR', LogisticRegression(solver='newton-cg')))
+    modelsR.append(('CART', DecisionTreeClassifier()))
+    #modelsR.append(('NB', GaussianNB()))
+    modelsR.append(('SVM', SVC(gamma='scale')))
+    modelsR.append(('RF', RandomForestClassifier(n_estimators = 100)))
+    #modelsR.append(('AGB', AdaBoostClassifier(n_estimators=100)))
+    modelsR.append(('SGB', GradientBoostingClassifier(n_estimators=100)))
+    
+    res_indicator = {'Helthy': {'precision': None,'recall': None,'f1-score': None,'support': None},
+    'Parhologic': {'precision': None,'recall': None,'f1-score': None,'support': None},
+    'micro avg': {'precision': None,'recall': None,'f1-score': None,'support': None},
+    'macro avg': {'precision': None,'recall': None,'f1-score': None,'support': None},
+    'weighted avg': {'precision': None,'recall': None,'f1-score': None,'support': None}}
+    res_indicator=pd.DataFrame.from_dict(res_indicator)
+    res_output = {}
+    names = []
+    accuracy = {}
+    
+    for nam, mod in modelsR:
+        mod.fit(X_train, y_train)
+        y_test_pred = mod.predict(X_test)
+        acc = accuracy_score(y_true=y_test, y_pred=y_test_pred)
+        accuracy[nam] = acc
+        res = classification_report(y_test, y_test_pred, target_names=["Helthy", "Pathologic"], output_dict=True)
+        res=pd.DataFrame.from_dict(res)
+        #res = res.loc[~pd.isnull(res_indicator.Helthy)]
+        res_output['model'] = names.append(nam)
+        res_output[nam] = res
+    return(res_output,accuracy)
+        
+
+def mainRgress(dataEigen,tot_var_explained,dat_healty,dat_pathologic,n_iterEigen,size_eigen_sample,scoring,
+         n_splits,n_iter_fitModels):
+    '''
+    input: size_eigen_sample: size of sample by eigenfaces (0,1)
+    '''
+    results_cv = {'LR':np.array([]),'LDA':np.array([]),'KNN':np.array([]),'CART':np.array([]),'NB':np.array([]),
+             'SVM':np.array([]),'RF':np.array([]),'AGB':np.array([]),'SGB':np.array([])}
+    
+    empt_ind = pd.DataFrame({'Helthy' : [], 'Pathologic' : [], 'micro avg' : [], 'macro avg' : [], 
+                             'weighted avg' : []})
+    
+    res_indicators = {'CART':empt_ind,'SVM':empt_ind,'RF':empt_ind,'SGB':empt_ind}
+    
+    res_accuracy = {'CART':[],'SVM':[],'RF':[],'SGB':[]}
+    
+    n_componentes = []
+
+    for i in range(n_iterEigen):
+ 
+        H_train, _ = train_test_split(dataEigen, test_size=1-size_eigen_sample)
+        
+        
+        healtONhealt,patholONhealt,n_comp = subespace(H_train,dat_healty,dat_pathologic,tot_var_explained)
+        n_componentes.append(n_comp)
+        
+        X_train, X_test, y_train, y_test = dataPreparation(healtONhealt,patholONhealt)
+        
+        
+        res_cv,names_cv = modelEvaluation(X_train,y_train,n_splits=n_splits,scoring=scoring)
+        for key in results_cv.keys():
+            results_cv[key] = np.concatenate((results_cv[key], res_cv[key]))
+            
+        
+        for k in range(n_iter_fitModels):
+            X_train_m, X_test_m, y_train_m, y_test_m = dataPreparation(healtONhealt,patholONhealt)
+            res_output,accuracy = modelFit(X_train_m, X_test_m, y_train_m, y_test_m)
+            for key_m in res_indicators.keys():
+                res_indicators[key_m] = res_indicators[key_m].append(res_output[key_m])
+                res_accuracy[key_m].append(accuracy[key_m])
+                     
+    return(results_cv,res_indicators,res_accuracy,n_componentes)
+
+
+def CV_plot(dat,indicator):
+    '''
+    boxplot and mean (CI 95%) of cv results
+    '''
+    labels, data = [*zip(*dat.items())]  
+    fig = plt.figure(figsize=(10, 5)) 
+    #fig.suptitle('Algorithm Comparison') 
+    ax = fig.add_subplot(111) 
+    plt.boxplot(data) 
+    plt.xticks(range(1, len(labels) + 1), labels)
+    ax.set(xlabel='Model', ylabel=indicator)
+    plt.show()
+
+    res = []
+    for k in dat.keys():
+        c = dat[k].shape[0]
+        m = np.mean(dat[k].tolist())
+        s = np.std(dat[k].tolist())
+        ci95_hi= m+1.96*s/math.sqrt(c)
+        ci95_lo = m-1.96*s/math.sqrt(c)
+        msg = "%s: %f (%f,%f)" % (k,m, ci95_lo, ci95_hi) 
+        print(msg)
+        
+def modelIndicators(dat,variable,indicator):
+    stats = dat.groupby([indicator])[variable].agg(['mean','count','std'])
+    ci95_hi = []; ci95_lo = []
+    for i in stats.index:
+        m,c,s = stats.loc[i]
+        ci95_hi.append(m+1.96*s/math.sqrt(c))
+        ci95_lo.append(m-1.96*s/math.sqrt(c))
+    stats['ci95_lo'] = ci95_lo
+    stats['ci95_hi'] = ci95_hi
+    return(stats)
+
+def acc(dat_acc,model):
+    dat = dat_acc[model]
+    m = np.mean(dat)
+    c = len(dat)
+    s = np.std(dat)
+    ci95_hi = (m+1.96*s/math.sqrt(c))
+    ci95_lo = (m-1.96*s/math.sqrt(c))
+    msg = "%s: %f (%f,%f)" % ('accuracy'+'_'+model,m, ci95_lo, ci95_hi) 
+    print(msg)
+    
+
+def mainRgress_bianca(dataEigen,tot_var_explained,dat_healty,dat_pathologic,n_iterEigen,size_eigen_sample,scoring,
+         n_splits,n_iter_fitModels):
+    '''
+    input: size_eigen_sample: size of sample by eigenfaces (0,1)
+    '''
+    results_cv = {'LR':np.array([]),'LDA':np.array([]),'KNN':np.array([]),'CART':np.array([]),'NB':np.array([]),
+             'SVM':np.array([]),'RF':np.array([]),'AGB':np.array([]),'SGB':np.array([])}
+    
+    empt_ind = pd.DataFrame({'Helthy' : [], 'Pathologic' : [], 'micro avg' : [], 'macro avg' : [], 
+                             'weighted avg' : []})
+    
+    res_indicators = {'NB':empt_ind,'SVM':empt_ind,'RF':empt_ind,'SGB':empt_ind}
+    
+    res_accuracy = {'NB':[],'SVM':[],'RF':[],'SGB':[]}
+    
+    n_componentes = []
+
+    for i in range(n_iterEigen):
+
+        H_train, H_test = train_test_split(dat_healty, test_size=1-size_eigen_sample)
+        
+        healtONhealt,patholONhealt,n_comp = subespace(H_train,H_test,dat_pathologic,tot_var_explained)
+        n_componentes.append(n_comp)
+
+        X_train, X_test, y_train, y_test = dataPreparation(healtONhealt,patholONhealt)
+        
+        res_cv,names_cv = modelEvaluation(X_train,y_train,n_splits=n_splits,scoring=scoring)
+        for key in results_cv.keys():
+            results_cv[key] = np.concatenate((results_cv[key], res_cv[key]))
+            
+        for k in range(n_iter_fitModels):
+            X_train_m, X_test_m, y_train_m, y_test_m = dataPreparation(healtONhealt,patholONhealt)
+            res_output,accuracy = modelFit(X_train_m, X_test_m, y_train_m, y_test_m)
+            for key_m in res_indicators.keys():
+                res_indicators[key_m] = res_indicators[key_m].append(res_output[key_m])
+                res_accuracy[key_m].append(accuracy[key_m])
+                     
+    return(results_cv,res_indicators,res_accuracy,n_componentes)
